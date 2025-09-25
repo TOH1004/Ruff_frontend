@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'homepage_chat2.dart';
+import 'auth_gate.dart';
 
 class RuffHomePage extends StatelessWidget {
   const RuffHomePage({super.key});
@@ -18,7 +18,7 @@ class RuffHomePage extends StatelessWidget {
               children: [
                 Text(
                   "RUFF",
-                  style: GoogleFonts.climateCrisis(
+                  style: GoogleFonts.bangers(
                     fontSize: 64,
                     fontWeight: FontWeight.w900,
                     color: Colors.white,
@@ -28,7 +28,7 @@ class RuffHomePage extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   "Campus Security",
-                  style: GoogleFonts.tiltWarp(
+                  style: GoogleFonts.fugazOne(
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
                     color: Colors.white,
@@ -59,11 +59,12 @@ class RuffHomePage extends StatelessWidget {
                   minimumSize: const Size(double.infinity, 55),
                 ),
                 onPressed: () {
-                  Navigator.push(
+                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => RuffAppScreen()),
-                  );
-                },
+                  MaterialPageRoute(builder: (_) => const SignInPage()),
+               );
+               },
+
                 child: Text(
                   "Start the Journey",
                   style: GoogleFonts.poppins(

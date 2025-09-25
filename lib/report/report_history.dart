@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'report_data.dart'; // contains reportHistory
 // contains Report model
-import 'edit_report.dart'; // for editing reports
+
 
 class HistoryPage extends StatelessWidget {
   const HistoryPage({super.key});
@@ -39,22 +39,7 @@ class HistoryPage extends StatelessWidget {
                         )
                       : const Icon(Icons.report),
                   trailing: PopupMenuButton<String>(
-                    onSelected: (value) {
-                      if (value == "edit") {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => EditReportPage(
-                              report: report,
-                              index: index,
-                            ),
-                          ),
-                        );
-                      } else if (value == "delete") {
-                        reportHistory.value = List.from(reportHistory.value)
-                          ..removeAt(index);
-                      }
-                    },
+                    
                     itemBuilder: (context) => [
                       const PopupMenuItem(
                         value: "edit",

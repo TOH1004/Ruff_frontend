@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'bottom_navigation.dart';
-import 'aibuddy_mode/caring.dart';
-import 'aibuddy_mode/silent.dart';
-import 'aibuddy_mode/chatty.dart';
+import '../bottom_navigation.dart';
+import 'caring.dart';
+import 'silent.dart';
+import 'chatty.dart';
 
 class AIBuddyPage extends StatefulWidget {
   const AIBuddyPage({super.key});

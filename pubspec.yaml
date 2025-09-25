@@ -30,7 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  google_fonts: ^6.2.1
+  google_fonts: ^4.0.4
   flutter_webrtc: 
     git:
       url: https://github.com/flutter-webrtc/flutter-webrtc.git
@@ -45,16 +45,30 @@ dependencies:
   geocoding: ^3.0.0
   permission_handler: ^11.3.1
   shared_preferences: ^2.1.1
-  firebase_core: ^3.5.0
-  firebase_auth: ^5.0.0
   flutter_tts: ^3.8.3
   flutter_sound: ^9.2.13
   speech_to_text: ^7.0.0
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  google_sign_in: ^6.2.1
+  cloud_firestore: ^5.6.12
+  firebase_storage: ^12.4.10
+  google_maps_flutter: ^2.5.0
+  http: ^0.13.0
+  flutter_google_places: ^0.3.0
+  google_maps_webservice: ^0.0.20-nullsafety.5
+  cached_network_image: ^3.3.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  
+
+dependency_overrides:
+  google_api_headers:
+    git:
+      url: https://github.com/zeshuaro/google_api_headers.git
+      ref: main
+
   
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -86,6 +100,8 @@ flutter:
   - assets/silent.png
   - assets/caring.png
   - assets/writingdog.png
+  - assets/guarddog.png
+  - assets/SOS.png
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

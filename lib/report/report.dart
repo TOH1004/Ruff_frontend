@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'report_data.dart';
 import 'report.dart';
-import 'edit_report.dart';
 import 'reportspage.dart';
 
 class ReportsPage extends StatefulWidget {
@@ -213,21 +212,7 @@ class _ReportsPageState extends State<ReportsPage> {
                             Icons.more_vert,
                             color: Colors.grey[600],
                           ),
-                          onSelected: (value) {
-                            if (value == "edit") {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => EditReportPage(
-                                    report: report,
-                                    index: index,
-                                  ),
-                                ),
-                              );
-                            } else if (value == "delete") {
-                              _showDeleteDialog(context, index);
-                            }
-                          },
+                          
                           itemBuilder: (context) => [
                             const PopupMenuItem(
                               value: "edit",
