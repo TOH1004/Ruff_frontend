@@ -5,9 +5,12 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as status;
 import 'package:geolocator/geolocator.dart';
-
+import 'package:image_picker/image_picker.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-
+import 'dart:typed_data';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:path/path.dart' as path;
+import 'package:cloud_firestore/cloud_firestore.dart';
 // Import separate files
 import 'models/participant.dart';
 import 'models/route_info.dart';
@@ -20,6 +23,8 @@ import 'widgets/google_map_widget.dart';
 import 'widgets/sos_button.dart';
 import 'widgets/control_bar.dart';
 import 'destination_dialog.dart';
+import 'models/guardhouse.dart';
+import 'widgets/map_legend.dart';
 
 const SIGNALING_SERVER_URL = 'wss://ruff-ox2a.onrender.com';
 const ROOM_ID = 'test-room';
@@ -48,14 +53,14 @@ class _VideoCallPageState extends State<VideoCallPage> {
   String? _destination;
   LatLng? _destinationLatLng;
   bool _isLoadingLocation = true;
-  
+
   // Google Maps related
   GoogleMapController? _mapController;
   Set<Marker> _markers = {};
   Set<Polyline> _polylines = {};
   RouteInfo? _routeInfo;
   bool _isLoadingRoute = false;
-  
+
   // Countdown and SOS functionality
   Timer? _countdownTimer;
   int _countdownSeconds = 60;
@@ -67,19 +72,276 @@ class _VideoCallPageState extends State<VideoCallPage> {
   late WebRTCService _webrtcService;
   late SOSService _sosService;
 
+List<Guardhouse> _guardhouses = [];
+  bool _isLoadingGuardhouses = true;
+
   @override
   void initState() {
     super.initState();
     _initializeServices();
     _initializeCall();
     _getCurrentLocation();
+    _loadGuardhouses(); 
     _startCountdown();
+  }
+
+Future<void> _loadGuardhouses() async {
+  print('🏠 Starting to load guardhouses...');
+  try {
+    final guardhouses = await GoogleMapsService.getGuardhouses();
+    print('🏠 Loaded ${guardhouses.length} guardhouses from Firebase');
+    
+    for (var guardhouse in guardhouses) {
+      print('🏠 Guardhouse: ${guardhouse.name}');
+      print('   - Address: ${guardhouse.address}');
+      print('   - Location: ${guardhouse.location.latitude}, ${guardhouse.location.longitude}');
+      print('   - Phone: ${guardhouse.phone}');
+    }
+    
+    if (mounted) {
+      setState(() {
+        _guardhouses = guardhouses;
+        _isLoadingGuardhouses = false;
+      });
+      print('🏠 About to add ${guardhouses.length} guardhouse markers');
+      _addGuardhouseMarkers();
+    }
+  } catch (e) {
+    print('❌ Error loading guardhouses: $e');
+    setState(() {
+      _isLoadingGuardhouses = false;
+    });
+  }
+}
+
+// Also add debug info to your marker adding method
+void _addGuardhouseMarkers() {
+  print('📍 Adding guardhouse markers...');
+  int addedMarkers = 0;
+  
+  for (var guardhouse in _guardhouses) {
+    if (guardhouse.location.latitude != 0.0 || guardhouse.location.longitude != 0.0) {
+      _markers.add(
+        Marker(
+          markerId: MarkerId('guardhouse_${guardhouse.id}'),
+          position: guardhouse.location,
+          infoWindow: InfoWindow(
+            title: guardhouse.name,
+            snippet: guardhouse.address,
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueGreen,
+          ),
+          onTap: () => _onGuardhouseMarkerTap(guardhouse),
+        ),
+      );
+      addedMarkers++;
+      print('📍 Added marker for ${guardhouse.name} at ${guardhouse.location}');
+    } else {
+      print('⚠️ Skipping ${guardhouse.name} - invalid coordinates (0,0)');
+    }
+  }
+  
+  print('📍 Total markers added: $addedMarkers');
+  print('📍 Total markers in set: ${_markers.length}');
+  setState(() {}); // Update UI
+}
+  // Add this method to handle guardhouse marker taps
+  void _onGuardhouseMarkerTap(Guardhouse guardhouse) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(guardhouse.name),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Address: ${guardhouse.address}'),
+              const SizedBox(height: 8),
+              if (_currentPosition != null)
+                Text(
+                  'Distance: ${_calculateDistance(
+                    _currentPosition!,
+                    guardhouse.location,
+                  )} km',
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _setDestinationToGuardhouse(guardhouse);
+              },
+              child: const Text('Set as Destination'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Add this method to calculate distance between two points
+  String _calculateDistance(Position currentPos, LatLng destination) {
+    double distanceInMeters = Geolocator.distanceBetween(
+      currentPos.latitude,
+      currentPos.longitude,
+      destination.latitude,
+      destination.longitude,
+    );
+    double distanceInKm = distanceInMeters / 1000;
+    return distanceInKm.toStringAsFixed(2);
+  }
+
+  // Add this method to set guardhouse as destination
+  void _setDestinationToGuardhouse(Guardhouse guardhouse) {
+    setState(() {
+      _destination = guardhouse.name;
+      _destinationLatLng = guardhouse.location;
+
+      // Remove existing destination marker and add new one
+      _markers.removeWhere(
+        (marker) => marker.markerId.value == 'destination',
+      );
+      
+      _markers.add(
+        Marker(
+          markerId: const MarkerId('destination'),
+          position: guardhouse.location,
+          infoWindow: InfoWindow(
+            title: 'Destination: ${guardhouse.name}',
+            snippet: guardhouse.address,
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueRed,
+          ),
+        ),
+      );
+
+      // Get directions to guardhouse
+      _getDirectionsToDestination();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Destination set to: ${guardhouse.name}'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+
+  // Add this method to highlight nearest guardhouses during SOS
+  void _highlightNearestGuardhouses() {
+    if (_currentPosition == null || _guardhouses.isEmpty) return;
+
+    // Calculate distances and sort guardhouses by proximity
+    List<MapEntry<Guardhouse, double>> guardhousesWithDistance = 
+        _guardhouses.map((guardhouse) {
+      double distance = Geolocator.distanceBetween(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+        guardhouse.location.latitude,
+        guardhouse.location.longitude,
+      );
+      return MapEntry(guardhouse, distance);
+    }).toList();
+
+    // Sort by distance (closest first)
+    guardhousesWithDistance.sort((a, b) => a.value.compareTo(b.value));
+
+    // Take only the 3 nearest guardhouses
+    List<Guardhouse> nearestGuardhouses = guardhousesWithDistance
+        .take(3)
+        .map((entry) => entry.key)
+        .toList();
+
+    // Remove existing guardhouse markers and add highlighted ones
+    _markers.removeWhere(
+      (marker) => marker.markerId.value.startsWith('guardhouse_'),
+    );
+
+    // Add highlighted markers for nearest guardhouses
+    for (int i = 0; i < nearestGuardhouses.length; i++) {
+      var guardhouse = nearestGuardhouses[i];
+      double distanceKm = guardhousesWithDistance
+          .firstWhere((entry) => entry.key.id == guardhouse.id)
+          .value / 1000;
+
+      _markers.add(
+        Marker(
+          markerId: MarkerId('emergency_guardhouse_${guardhouse.id}'),
+          position: guardhouse.location,
+          infoWindow: InfoWindow(
+            title: '🚨 ${guardhouse.name}',
+            snippet: '${guardhouse.address}\n${distanceKm.toStringAsFixed(2)} km away',
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueOrange, // Orange for emergency guardhouses
+          ),
+          onTap: () => _onEmergencyGuardhouseTap(guardhouse, distanceKm),
+        ),
+      );
+    }
+  }
+
+  // Add this method to handle emergency guardhouse marker taps
+  void _onEmergencyGuardhouseTap(Guardhouse guardhouse, double distanceKm) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: Colors.red[50],
+          title: Row(
+            children: [
+              const Icon(Icons.security, color: Colors.red),
+              const SizedBox(width: 8),
+              Expanded(child: Text(guardhouse.name)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Emergency Guardhouse'),
+              const SizedBox(height: 8),
+              Text('Address: ${guardhouse.address}'),
+              Text('Distance: ${distanceKm.toStringAsFixed(2)} km'),
+              const SizedBox(height: 8),
+              const Text(
+                'This guardhouse has been automatically identified as one of the nearest emergency points.',
+                style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _setDestinationToGuardhouse(guardhouse);
+              },
+              child: const Text('Navigate Here', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _initializeServices() {
     _locationService = LocationService();
     _webrtcService = WebRTCService();
-    _sosService = SOSService();
+    _sosService = SOSService(); // Changed from SOSService to EnhancedSOSService
   }
 
   @override
@@ -92,13 +354,13 @@ class _VideoCallPageState extends State<VideoCallPage> {
     _countdownTimer?.cancel();
     _localStream?.getTracks().forEach((track) => track.stop());
     await _localRenderer.dispose();
-    
+
     // Cleanup remote participants
     for (var participant in _remoteParticipants) {
       await participant.renderer.dispose();
       await participant.peerConnection?.close();
     }
-    
+
     await _peerConnection?.close();
     _channel?.sink.close(status.goingAway);
   }
@@ -132,74 +394,92 @@ class _VideoCallPageState extends State<VideoCallPage> {
     }
   }
 
-  void _triggerSOS() {
-    if (_isSOSTriggered) return; // Prevent multiple triggers
-    
+  // In your videocall.dart, update the _triggerSOS method:
+
+  void _triggerSOS() async {
+    if (_isSOSTriggered) return;
+
     setState(() {
       _isSOSTriggered = true;
       _isCountdownActive = false;
     });
-    
+
     _countdownTimer?.cancel();
     _showSOSAlert();
     _addEmergencyLocations();
-    
-    // Trigger SOS service
-    _sosService.triggerSOS(_currentPosition);
-    
-    print('SOS EMERGENCY ACTIVATED!');
+
+    // Trigger SOS without files
+    String? sosRequestId = await _sosService.triggerSOS(
+      _currentPosition,
+      additionalInfo: "Emergency triggered during video call",
+    );
+
+    if (sosRequestId != null) {
+      print('✅ SOS triggered successfully: $sosRequestId');
+
+      // Create backup
+      await _sosService.createSOSBackup(sosRequestId);
+    }
   }
 
-  void _manualSOSTrigger() {
-    if (_isSOSTriggered) return; // Prevent multiple triggers
-    
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text(
-            'Emergency SOS',
-            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+void _manualSOSTrigger() {
+  if (_isSOSTriggered) return; // Prevent multiple triggers
+
+  showDialog(
+    context: context,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: const Text(
+          'Emergency SOS',
+          style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Are you sure you want to trigger SOS emergency alert?',
+        ),
+        actions: <Widget>[
+          TextButton(
+            child: const Text('Cancel'),
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
           ),
-          content: const Text('Are you sure you want to trigger SOS emergency alert?'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-            TextButton(
-              child: const Text(
-                'Trigger SOS',
-                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+          TextButton(
+            child: const Text(
+              'Trigger SOS',
+              style: TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
               ),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _triggerSOS();
-              },
             ),
-          ],
-        );
-      },
-    );
-  }
+            onPressed: () async {
+              Navigator.of(context).pop(); // Close dialog
+              _triggerSOS(); // ✅ Call the same method as countdown
+            },
+          ),
+        ],
+      );
+    },
+  );
+}
+
 
   void _addEmergencyLocations() {
     if (_currentPosition == null) return;
 
-    // Add guardhouse and store markers
-    final emergencyLocations = _sosService.getNearbyEmergencyLocations(_currentPosition!);
-    
     setState(() {
       // Clear existing markers except current location
-      _markers.removeWhere((marker) => marker.markerId.value != 'current_location');
-      
+      _markers.removeWhere(
+        (marker) => marker.markerId.value != 'current_location',
+      );
+
       // Re-add current location
       _markers.add(
         Marker(
           markerId: const MarkerId('current_location'),
-          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          position: LatLng(
+            _currentPosition!.latitude,
+            _currentPosition!.longitude,
+          ),
           infoWindow: InfoWindow(
             title: 'Your Location (SOS ACTIVE)',
             snippet: _currentAddress,
@@ -207,9 +487,6 @@ class _VideoCallPageState extends State<VideoCallPage> {
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
         ),
       );
-      
-      // Add emergency locations
-      _markers.addAll(emergencyLocations);
     });
 
     // Fit map to show all emergency locations
@@ -329,8 +606,11 @@ class _VideoCallPageState extends State<VideoCallPage> {
 
   Future<void> _switchCamera() async {
     try {
-      final newStream = await _webrtcService.switchCamera(!_isFrontCamera, _peerConnection);
-      
+      final newStream = await _webrtcService.switchCamera(
+        !_isFrontCamera,
+        _peerConnection,
+      );
+
       // Stop current video tracks
       final oldVideoTracks = _localStream?.getVideoTracks();
       oldVideoTracks?.forEach((track) => track.stop());
@@ -342,7 +622,6 @@ class _VideoCallPageState extends State<VideoCallPage> {
       setState(() {
         _isFrontCamera = !_isFrontCamera;
       });
-
     } catch (e) {
       _showError('Failed to switch camera: $e');
     }
@@ -385,12 +664,11 @@ class _VideoCallPageState extends State<VideoCallPage> {
       );
 
       await _createPeerConnection();
-      
+
       setState(() {
         _connectionStatus = 'Connected';
         _isConnected = true;
       });
-
     } catch (e) {
       setState(() {
         _connectionStatus = 'Connection Failed';
@@ -423,16 +701,16 @@ class _VideoCallPageState extends State<VideoCallPage> {
         final participantId = 'participant_${_remoteParticipants.length + 1}';
         final renderer = RTCVideoRenderer();
         await renderer.initialize();
-        
+
         final participant = Participant(
           id: participantId,
           name: 'Participant ${_remoteParticipants.length + 1}',
           renderer: renderer,
           peerConnection: _peerConnection,
         );
-        
+
         participant.renderer.srcObject = event.streams[0];
-        
+
         setState(() {
           _remoteParticipants.add(participant);
           _isCallActive = true;
@@ -451,7 +729,7 @@ class _VideoCallPageState extends State<VideoCallPage> {
   Future<void> _getCurrentLocation() async {
     try {
       final result = await _locationService.getCurrentLocation();
-      
+
       if (result != null && mounted) {
         setState(() {
           _currentPosition = result['position'];
@@ -460,12 +738,17 @@ class _VideoCallPageState extends State<VideoCallPage> {
           _markers.add(
             Marker(
               markerId: const MarkerId('current_location'),
-              position: LatLng(result['position'].latitude, result['position'].longitude),
+              position: LatLng(
+                result['position'].latitude,
+                result['position'].longitude,
+              ),
               infoWindow: InfoWindow(
                 title: 'Your Location',
                 snippet: result['address'],
               ),
-              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+              icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueBlue,
+              ),
             ),
           );
         });
@@ -475,7 +758,10 @@ class _VideoCallPageState extends State<VideoCallPage> {
           _mapController!.animateCamera(
             CameraUpdate.newCameraPosition(
               CameraPosition(
-                target: LatLng(result['position'].latitude, result['position'].longitude),
+                target: LatLng(
+                  result['position'].latitude,
+                  result['position'].longitude,
+                ),
                 zoom: 15.0,
               ),
             ),
@@ -496,8 +782,14 @@ class _VideoCallPageState extends State<VideoCallPage> {
     setState(() => _isLoadingRoute = true);
 
     try {
-      LatLng origin = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
-      RouteInfo? routeInfo = await GoogleMapsService.getDirections(origin, _destinationLatLng!);
+      LatLng origin = LatLng(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+      );
+      RouteInfo? routeInfo = await GoogleMapsService.getDirections(
+        origin,
+        _destinationLatLng!,
+      );
 
       if (routeInfo != null) {
         setState(() {
@@ -524,10 +816,18 @@ class _VideoCallPageState extends State<VideoCallPage> {
 
   void _fitMapToRoute(LatLng origin, LatLng destination) {
     if (_mapController != null) {
-      double minLat = origin.latitude < destination.latitude ? origin.latitude : destination.latitude;
-      double maxLat = origin.latitude > destination.latitude ? origin.latitude : destination.latitude;
-      double minLng = origin.longitude < destination.longitude ? origin.longitude : destination.longitude;
-      double maxLng = origin.longitude > destination.longitude ? origin.longitude : destination.longitude;
+      double minLat = origin.latitude < destination.latitude
+          ? origin.latitude
+          : destination.latitude;
+      double maxLat = origin.latitude > destination.latitude
+          ? origin.latitude
+          : destination.latitude;
+      double minLng = origin.longitude < destination.longitude
+          ? origin.longitude
+          : destination.longitude;
+      double maxLng = origin.longitude > destination.longitude
+          ? origin.longitude
+          : destination.longitude;
 
       _mapController!.animateCamera(
         CameraUpdate.newLatLngBounds(
@@ -562,11 +862,7 @@ class _VideoCallPageState extends State<VideoCallPage> {
       );
       RTCSessionDescription answer = await _peerConnection!.createAnswer();
       await _peerConnection!.setLocalDescription(answer);
-      _sendMessage({
-        'type': 'answer',
-        'sdp': answer.sdp,
-        'room': ROOM_ID,
-      });
+      _sendMessage({'type': 'answer', 'sdp': answer.sdp, 'room': ROOM_ID});
     } catch (e) {
       print('Error handling offer: $e');
     }
@@ -608,11 +904,7 @@ class _VideoCallPageState extends State<VideoCallPage> {
       if (_peerConnection != null) {
         RTCSessionDescription offer = await _peerConnection!.createOffer();
         await _peerConnection!.setLocalDescription(offer);
-        _sendMessage({
-          'type': 'offer',
-          'sdp': offer.sdp,
-          'room': ROOM_ID,
-        });
+        _sendMessage({'type': 'offer', 'sdp': offer.sdp, 'room': ROOM_ID});
       }
     } catch (e) {
       _showError('Failed to start call: $e');
@@ -628,7 +920,7 @@ class _VideoCallPageState extends State<VideoCallPage> {
       setState(() {
         _isMuted = !enabled; // Update mute state
       });
-      
+
       // Show feedback to user
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -667,7 +959,10 @@ class _VideoCallPageState extends State<VideoCallPage> {
               },
             ),
             TextButton(
-              child: const Text('End Call', style: TextStyle(color: Colors.red)),
+              child: const Text(
+                'End Call',
+                style: TextStyle(color: Colors.red),
+              ),
               onPressed: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).pop(); // Go back to previous screen
@@ -687,7 +982,7 @@ class _VideoCallPageState extends State<VideoCallPage> {
           setState(() {
             _destination = destination;
             _destinationLatLng = latLng;
-            
+
             if (latLng != null) {
               // Add destination marker
               _markers.add(
@@ -698,15 +993,17 @@ class _VideoCallPageState extends State<VideoCallPage> {
                     title: 'Destination',
                     snippet: destination,
                   ),
-                  icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                  icon: BitmapDescriptor.defaultMarkerWithHue(
+                    BitmapDescriptor.hueRed,
+                  ),
                 ),
               );
-              
+
               // Get directions
               _getDirectionsToDestination();
             }
           });
-          
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Destination set to: $destination'),
@@ -721,10 +1018,7 @@ class _VideoCallPageState extends State<VideoCallPage> {
   void _showError(String message) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
       );
     }
   }
@@ -734,7 +1028,9 @@ class _VideoCallPageState extends State<VideoCallPage> {
     return GestureDetector(
       onTap: _resetCountdown,
       child: Scaffold(
-        backgroundColor: _isSOSTriggered ? Colors.red[900] : Colors.black, // Changed background color
+        backgroundColor: _isSOSTriggered
+            ? Colors.red[900]
+            : Colors.black, // Changed background color
         body: SafeArea(
           child: Column(
             children: [
@@ -749,27 +1045,34 @@ class _VideoCallPageState extends State<VideoCallPage> {
                       onPressed: () => Navigator.pop(context),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: _isSOSTriggered
                             ? Colors.white
                             : _isCountdownActive
-                                ? (_countdownSeconds <= 10 ? Colors.red : Colors.white.withOpacity(0.9))
-                                : Colors.red,
+                            ? (_countdownSeconds <= 10
+                                  ? Colors.red
+                                  : Colors.white.withOpacity(0.9))
+                            : Colors.red,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Text(
-                        _isSOSTriggered 
-                            ? 'SOS ACTIVE!' 
-                            : _isCountdownActive 
-                                ? _formatCountdown(_countdownSeconds) 
-                                : 'SOS!',
+                        _isSOSTriggered
+                            ? 'SOS ACTIVE!'
+                            : _isCountdownActive
+                            ? _formatCountdown(_countdownSeconds)
+                            : 'SOS!',
                         style: TextStyle(
                           color: _isSOSTriggered
                               ? Colors.red
                               : _isCountdownActive
-                                  ? (_countdownSeconds <= 10 ? Colors.white : Colors.black)
-                                  : Colors.white,
+                              ? (_countdownSeconds <= 10
+                                    ? Colors.white
+                                    : Colors.black)
+                              : Colors.white,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -835,36 +1138,40 @@ class _VideoCallPageState extends State<VideoCallPage> {
               const SizedBox(height: 16),
 
               // Google Maps section (at the top)
-              Expanded(
-                flex: 2,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: GoogleMapWidget(
-                    currentPosition: _currentPosition,
-                    markers: _markers,
-                    polylines: _polylines,
-                    routeInfo: _routeInfo,
-                    isLoadingRoute: _isLoadingRoute,
-                    destination: _destination,
-                    onMapCreated: (GoogleMapController controller) {
-                      _mapController = controller;
-                    },
-                    onDestinationPressed: _showDestinationDialog,
-                    onRecenterPressed: () {
-                      if (_mapController != null && _currentPosition != null) {
-                        _mapController!.animateCamera(
-                          CameraUpdate.newCameraPosition(
-                            CameraPosition(
-                              target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-                              zoom: 15.0,
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                  ),
+             Expanded(
+  flex: 2,
+  child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: GoogleMapWidget(
+      currentPosition: _currentPosition,
+      markers: _markers,
+      polylines: _polylines,
+      routeInfo: _routeInfo,
+      isLoadingRoute: _isLoadingRoute,
+      destination: _destination,
+      isSOSActive: _isSOSTriggered, // Add this line
+      onMapCreated: (GoogleMapController controller) {
+        _mapController = controller;
+      },
+      onDestinationPressed: _showDestinationDialog,
+      onRecenterPressed: () {
+        if (_mapController != null && _currentPosition != null) {
+          _mapController!.animateCamera(
+            CameraUpdate.newCameraPosition(
+              CameraPosition(
+                target: LatLng(
+                  _currentPosition!.latitude,
+                  _currentPosition!.longitude,
                 ),
+                zoom: 15.0,
               ),
+            ),
+          );
+        }
+      },
+    ),
+  ),
+),
 
               const SizedBox(height: 8),
 

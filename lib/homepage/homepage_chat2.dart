@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-
+import '../testmap.dart'; 
 // Component Imports
 import 'hero_section.dart';
 import 'action_cards_section.dart';
@@ -14,6 +14,7 @@ import '../videocall/videocall_data.dart';
 import '../videocall/videocall.dart';
 import '../videocall/wrapper.dart';
 import '../profile.dart';
+import '../guard/(guard)homepage_chat2.dart';
 
 class RuffAppScreen extends StatelessWidget {
   RuffAppScreen({super.key});
@@ -319,9 +320,6 @@ class RuffAppScreen extends StatelessWidget {
                   ),
                   GestureDetector(
                     onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Settings page coming soon!')),
-                      );
                     },
                     child: _buildBottomNavItem(Icons.settings, "Settings", false),
                   ),

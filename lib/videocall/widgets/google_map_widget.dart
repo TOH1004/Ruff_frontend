@@ -1,15 +1,19 @@
+// Updated google_map_widget.dart with legend integration
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../models/route_info.dart';
+import 'map_legend.dart'; // Add this import
 
-class GoogleMapWidget extends StatelessWidget {
+class GoogleMapWidget extends StatefulWidget {
   final Position? currentPosition;
   final Set<Marker> markers;
   final Set<Polyline> polylines;
   final RouteInfo? routeInfo;
   final bool isLoadingRoute;
   final String? destination;
+  final bool isSOSActive; // Add this parameter
   final Function(GoogleMapController) onMapCreated;
   final VoidCallback onDestinationPressed;
   final VoidCallback onRecenterPressed;
@@ -22,14 +26,22 @@ class GoogleMapWidget extends StatelessWidget {
     required this.routeInfo,
     required this.isLoadingRoute,
     required this.destination,
+    required this.isSOSActive, // Add this parameter
     required this.onMapCreated,
     required this.onDestinationPressed,
     required this.onRecenterPressed,
   });
 
   @override
+  State<GoogleMapWidget> createState() => _GoogleMapWidgetState();
+}
+
+class _GoogleMapWidgetState extends State<GoogleMapWidget> {
+  bool _showLegend = false;
+
+  @override
   Widget build(BuildContext context) {
-    if (currentPosition == null) {
+    if (widget.currentPosition == null) {
       return Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
@@ -58,21 +70,32 @@ class GoogleMapWidget extends StatelessWidget {
         child: Stack(
           children: [
             GoogleMap(
-              onMapCreated: onMapCreated,
+              onMapCreated: widget.onMapCreated,
               initialCameraPosition: CameraPosition(
-                target: LatLng(currentPosition!.latitude, currentPosition!.longitude),
+                target: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
                 zoom: 15.0,
               ),
-              markers: markers,
-              polylines: polylines,
+              markers: widget.markers,
+              polylines: widget.polylines,
               myLocationEnabled: true,
               myLocationButtonEnabled: false,
               zoomControlsEnabled: false,
               mapToolbarEnabled: false,
             ),
 
+            // Map Legend
+            MapLegend(
+              isSOSActive: widget.isSOSActive,
+              showLegend: _showLegend,
+              onToggleLegend: () {
+                setState(() {
+                  _showLegend = !_showLegend;
+                });
+              },
+            ),
+
             // Route info overlay
-            if (routeInfo != null)
+            if (widget.routeInfo != null)
               Positioned(
                 top: 16,
                 right: 16,
@@ -99,7 +122,7 @@ class GoogleMapWidget extends StatelessWidget {
                           const Icon(Icons.schedule, color: Colors.white, size: 16),
                           const SizedBox(width: 4),
                           Text(
-                            routeInfo!.duration,
+                            widget.routeInfo!.duration,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 12,
@@ -115,7 +138,7 @@ class GoogleMapWidget extends StatelessWidget {
                           const Icon(Icons.straighten, color: Colors.white, size: 16),
                           const SizedBox(width: 4),
                           Text(
-                            routeInfo!.distance,
+                            widget.routeInfo!.distance,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 12,
@@ -129,7 +152,7 @@ class GoogleMapWidget extends StatelessWidget {
               ),
 
             // Loading overlay
-            if (isLoadingRoute)
+            if (widget.isLoadingRoute)
               Positioned(
                 top: 16,
                 right: 16,
@@ -166,10 +189,10 @@ class GoogleMapWidget extends StatelessWidget {
               bottom: 16,
               left: 16,
               child: ElevatedButton.icon(
-                onPressed: onDestinationPressed,
+                onPressed: widget.onDestinationPressed,
                 icon: const Icon(Icons.place, size: 16),
                 label: Text(
-                  destination ?? 'Set Destination',
+                  widget.destination ?? 'Set Destination',
                   style: const TextStyle(fontSize: 12),
                 ),
                 style: ElevatedButton.styleFrom(
@@ -191,7 +214,7 @@ class GoogleMapWidget extends StatelessWidget {
                 mini: true,
                 backgroundColor: Colors.white,
                 foregroundColor: Colors.black,
-                onPressed: onRecenterPressed,
+                onPressed: widget.onRecenterPressed,
                 child: const Icon(Icons.my_location, size: 20),
               ),
             ),

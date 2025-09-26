@@ -1,38 +1,31 @@
 // lib/sos_page.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // <-- MODIFIED: Ensure FirebaseAuth is imported
+
 
 class SosPage extends StatelessWidget {
   const SosPage({super.key});
+
+  // MODIFIED: Function to force token refresh
+  Future<void> _ensureTokenIsFresh() async {
+    // Calling getIdTokenResult(true) forces the client to refresh the token 
+    // from the server, picking up any new custom claims (like 'role: guard').
+    await FirebaseAuth.instance.currentUser?.getIdTokenResult(true);
+  }
 
   @override
   Widget build(BuildContext context) {
     const blue = Color(0xFF3075FF);
     const pageBg = Color(0xFFF4F5F7);
 
-    // Example data (2 items)
-    final incidents = <SosIncident>[
-      SosIncident(
-        identity: Identity(name: 'Alex', studentId: 'A1234567'),
-        journey: Journey(
-          startPoint: 'Library',
-          destination: 'Dorm',
-          startedAt: DateTime.now().subtract(const Duration(minutes: 10)),
-        ),
-        companionship: Companionship.alone,
-        createdAt: DateTime.now(),
-      ),
-      SosIncident(
-        identity: Identity(name: 'Joe', studentId: 'A7654321'),
-        journey: Journey(
-          startPoint: 'Marconi Park',
-          destination: 'Hall B',
-          startedAt: DateTime.now().subtract(const Duration(minutes: 3)),
-        ),
-        companionship: Companionship.ai,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 2)),
-      ),
-    ];
+    // Firestore query: all OPEN SOS tickets (newest first)
+    final q = FirebaseFirestore.instance
+        .collection('sos_requests')
+        .where('status', isEqualTo: 'open')
+        .orderBy('createdAt', descending: true);
 
     return Scaffold(
       backgroundColor: pageBg,
@@ -44,24 +37,81 @@ class SosPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
         centerTitle: true,
-        title: Text(
-          'SOS',
+        title: Text('SOS',
           style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w700),
         ),
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        itemCount: incidents.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 14),
-        itemBuilder: (context, i) => SosCard(
-          incident: incidents[i],
-          onUrgent: () {
-            // TODO: handle urgent action (e.g., navigate or accept assignment)
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Responding to ${incidents[i].identity.name}...')),
-            );
-          },
-        ),
+      // MODIFIED: Wrap the StreamBuilder in a FutureBuilder
+      body: FutureBuilder(
+        future: _ensureTokenIsFresh(),
+        builder: (context, snapshot) {
+          // Show loading while token is refreshing
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          
+          // Once the token is fresh, start the stream (this is the original StreamBuilder code)
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: q.snapshots(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snap.hasError) {
+                // If the error persists here, the issue is not the token, but the Security Rules configuration or claim setting itself.
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Couldn’t load SOS tickets.\n${snap.error}',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(),
+                    ),
+                  ),
+                );
+              }
+              final docs = snap.data?.docs ?? [];
+              if (docs.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'No active SOS right now.',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                );
+              }
+
+              final incidents = docs.map((d) => SosIncident.fromDoc(d)).toList();
+
+              return ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                itemCount: incidents.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 14),
+                itemBuilder: (context, i) => SosCard(
+                  incident: incidents[i],
+                  onUrgent: () async {
+                    final err = await acceptSOS(incidents[i].sosId);
+                    if (context.mounted) {
+                      if (err == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Accepted ${incidents[i].identity.name}.')),
+                        );
+                        // TODO: optionally navigate to a detail / pairing page:
+                        // Navigator.of(context).pushNamed('/pairing', arguments: incidents[i].sosId);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(err)),
+                        );
+                      }
+                    }
+                  },
+                ),
+              );
+            },
+          );
+        },
       ),
       bottomNavigationBar: const _BottomBar(current: 0),
     );
@@ -71,18 +121,62 @@ class SosPage extends StatelessWidget {
 /* ======================= Data models ======================= */
 
 class SosIncident {
+  final String sosId;
   final Identity identity;
   final Journey journey;
   final Companionship companionship;
   final DateTime createdAt;
 
   SosIncident({
+    required this.sosId,
     required this.identity,
     required this.journey,
     required this.companionship,
     required this.createdAt,
   });
+
+  // Converts Firestore doc → SosIncident while being tolerant to missing fields.
+  factory SosIncident.fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final d = doc.data();
+
+    // Identity fallbacks: prefer explicit fields; fall back to userId as display
+    final name = (d['studentName'] as String?) ??
+        (d['userName'] as String?) ??
+        'The user';
+    final studentId = (d['studentIdNo'] as String?) ??
+        (d['userId'] as String?) ??
+        '—';
+    final photoUrl = d['photoUrl'] as String?;
+
+    // Journey: if your schema uses different keys, tweak these three lines
+    final start = (d['startPoint'] as String?) ?? 'Unknown';
+    final dest = (d['destination'] as String?) ?? 'Unknown';
+    final startedAt = _tsToDate(
+          d['journeyStartedAt'] as Timestamp?) ??
+        _tsToDate(d['createdAt'] as Timestamp?) ??
+        DateTime.now();
+
+    // Companionship: stored as 'alone' | 'ai' | 'friends' ? Fallback to alone
+    final compStr = (d['companionship'] as String?)?.toLowerCase();
+    final comp = compStr == 'friends'
+        ? Companionship.friends
+        : (compStr == 'ai' ? Companionship.ai : Companionship.alone);
+
+    // createdAt: use field if present else document createTime
+    final created = _tsToDate(d['createdAt'] as Timestamp?) ??
+        (doc.metadata.hasPendingWrites ? DateTime.now() : DateTime.now());
+
+    return SosIncident(
+      sosId: doc.id,
+      identity: Identity(name: name, studentId: studentId, photoUrl: photoUrl),
+      journey: Journey(startPoint: start, destination: dest, startedAt: startedAt),
+      companionship: comp,
+      createdAt: created,
+    );
+  }
 }
+
+DateTime? _tsToDate(Timestamp? t) => t?.toDate();
 
 class Identity {
   final String name;
@@ -344,5 +438,31 @@ class _BottomBar extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/* ======================= Functions integration ======================= */
+
+Future<String?> acceptSOS(String sosId) async {
+  try {
+    final callable = FirebaseFunctions.instance.httpsCallable('acceptSOS');
+    final res = await callable.call({'sosId': sosId});
+    final ok = (res.data is Map && (res.data['ok'] == true)) || (res.data == true);
+    return ok ? null : 'Unknown error';
+  } on FirebaseFunctionsException catch (e) {
+    switch (e.code) {
+      case 'failed-precondition':
+        return "Another guard already accepted, or you're not on duty.";
+      case 'permission-denied':
+        return "Only guards can accept.";
+      case 'not-found':
+        return "SOS not found.";
+      case 'unauthenticated':
+        return "Please sign in first.";
+      default:
+        return e.message ?? 'Error';
+    }
+  } catch (e) {
+    return 'Network error';
   }
 }

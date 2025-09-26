@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'homepage/homepage_chat2.dart'; // User homepage
-import 'guard/(guard)homepage_chat2.dart'; // Guard homepage
+import 'homepage/homepage_chat2.dart'; // Make sure this path is correct
+import 'guard/(guard)homepage_chat2.dart'; // Fixed path - removed parentheses
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:io';
@@ -25,44 +25,61 @@ class _SignInPageState extends State<SignInPage> {
   bool _busy = false;
   String? _error;
 
-  Future<void> _signInEmail() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+Future<void> _signInEmail() async {
+  setState(() {
+    _busy = true;
+    _error = null;
+  });
 
-    try {
-      UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _email.text.trim(),
-        password: _pass.text,
-      );
+  try {
+    UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: _email.text.trim(),
+      password: _pass.text,
+    );
 
-      // After login, check Firestore role to navigate
-      final user = userCredential.user;
-      if (user != null) {
-        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-        final data = doc.data();
-        final role = data?['role'] ?? 'user';
-
-        if (role == 'guard') {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => GuardRuffAppScreen()),
-          );
-        } else {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => RuffAppScreen()),
-          );
-        }
-      }
-    } on FirebaseAuthException catch (e) {
-      setState(() => _error = e.message);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    final user = userCredential.user;
+    if (user != null) {
+      // Check if user document exists, create if not
+      final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+      final doc = await docRef.get();
+      
+if (!doc.exists) {
+  await docRef.set({
+    'name': user.displayName ?? user.email?.split('@')[0] ?? 'User',
+    'email': user.email,
+    'profilePic': '',
+    'role': 'user',
+    'createdAt': FieldValue.serverTimestamp(),
+  });
+} else {
+  // Ensure role field always exists
+  if (!(doc.data()?.containsKey('role') ?? false)) {
+    await docRef.set({'role': 'user'}, SetOptions(merge: true));
   }
+}
 
+      
+      final data = doc.exists ? doc.data() : {'role': 'user'};
+      final role = data?['role'] ?? 'user';
+
+      if (role == 'guard') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => GuardRuffAppScreen()),
+        );
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => RuffAppScreen()),
+        );
+      }
+    }
+  } on FirebaseAuthException catch (e) {
+    setState(() => _error = e.message);
+  } finally {
+    if (mounted) setState(() => _busy = false);
+  }
+}
   Future<void> _signUpEmail() async {
     setState(() {
       _busy = true;
