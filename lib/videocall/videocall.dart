@@ -28,6 +28,8 @@ import 'widgets/map_legend.dart';
 
 const SIGNALING_SERVER_URL = 'wss://ruff-ox2a.onrender.com';
 const ROOM_ID = 'test-room';
+RouteType _currentRouteType = RouteType.custom;
+bool _showGuardhouseRoutes = false;
 
 class VideoCallPage extends StatefulWidget {
   const VideoCallPage({super.key});
@@ -53,6 +55,68 @@ class _VideoCallPageState extends State<VideoCallPage> {
   String? _destination;
   LatLng? _destinationLatLng;
   bool _isLoadingLocation = true;
+
+
+Future<void> _testFirebaseConnection() async {
+  print('🔥 [TEST] Testing Firebase connection...');
+  try {
+    // Test basic Firebase connection
+    final testSnapshot = await FirebaseFirestore.instance
+        .collection('guardhouses')
+        .limit(1)
+        .get()
+        .timeout(Duration(seconds: 10));
+    
+    print('🔥 [TEST] Firebase connection successful!');
+    print('🔥 [TEST] Can access guardhouses collection: ${testSnapshot.docs.isNotEmpty}');
+    
+    if (testSnapshot.docs.isNotEmpty) {
+      final firstDoc = testSnapshot.docs.first;
+      print('🔥 [TEST] First document ID: ${firstDoc.id}');
+      print('🔥 [TEST] First document data: ${firstDoc.data()}');
+    }
+    
+    // Test full collection access
+    final fullSnapshot = await FirebaseFirestore.instance
+        .collection('guardhouses')
+        .get()
+        .timeout(Duration(seconds: 15));
+    
+    print('🔥 [TEST] Total documents in guardhouses: ${fullSnapshot.docs.length}');
+    
+    // List all document IDs and basic info
+    for (int i = 0; i < fullSnapshot.docs.length; i++) {
+      final doc = fullSnapshot.docs[i];
+      final data = doc.data() as Map<String, dynamic>;
+      print('🔥 [TEST] Doc ${i+1}: ${doc.id}');
+      print('🔥 [TEST]   Name: ${data['name']}');
+      print('🔥 [TEST]   Address: ${data['address']}');
+      print('🔥 [TEST]   Has lat: ${data.containsKey('lat')}');
+      print('🔥 [TEST]   Has lng: ${data.containsKey('lng')}');
+    }
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Firebase Test: Found ${fullSnapshot.docs.length} guardhouses'),
+        backgroundColor: Colors.blue,
+        duration: Duration(seconds: 3),
+      ),
+    );
+    
+  } catch (e, stackTrace) {
+    print('🔥 [TEST] Firebase connection failed: $e');
+    print('🔥 [TEST] Stack trace: $stackTrace');
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Firebase Test Failed: $e'),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 5),
+      ),
+    );
+  }
+}
+
 
   // Google Maps related
   GoogleMapController? _mapController;
@@ -86,16 +150,24 @@ List<Guardhouse> _guardhouses = [];
   }
 
 Future<void> _loadGuardhouses() async {
-  print('🏠 Starting to load guardhouses...');
+  print('📍 [DEBUG] _loadGuardhouses() called');
+  
+  setState(() {
+    _isLoadingGuardhouses = true;
+  });
+  
   try {
+    print('📍 [DEBUG] Calling GoogleMapsService.getGuardhouses()');
     final guardhouses = await GoogleMapsService.getGuardhouses();
-    print('🏠 Loaded ${guardhouses.length} guardhouses from Firebase');
+    print('📍 [DEBUG] Received ${guardhouses.length} guardhouses from service');
     
-    for (var guardhouse in guardhouses) {
-      print('🏠 Guardhouse: ${guardhouse.name}');
-      print('   - Address: ${guardhouse.address}');
-      print('   - Location: ${guardhouse.location.latitude}, ${guardhouse.location.longitude}');
-      print('   - Phone: ${guardhouse.phone}');
+    // Print details of each guardhouse
+    for (int i = 0; i < guardhouses.length; i++) {
+      var gh = guardhouses[i];
+      print('📍 [DEBUG] Guardhouse $i: ${gh.name}');
+      print('📍 [DEBUG]   Address: ${gh.address}');
+      print('📍 [DEBUG]   Location: ${gh.location.latitude}, ${gh.location.longitude}');
+      print('📍 [DEBUG]   ID: ${gh.id}');
     }
     
     if (mounted) {
@@ -103,48 +175,150 @@ Future<void> _loadGuardhouses() async {
         _guardhouses = guardhouses;
         _isLoadingGuardhouses = false;
       });
-      print('🏠 About to add ${guardhouses.length} guardhouse markers');
+      
+      print('📍 [DEBUG] State updated, calling _addGuardhouseMarkers()');
       _addGuardhouseMarkers();
+      
+      // Show confirmation
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Debug: Loaded ${guardhouses.length} guardhouses'),
+          backgroundColor: guardhouses.isEmpty ? Colors.orange : Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else {
+      print('📍 [DEBUG] Widget not mounted, skipping state update');
     }
-  } catch (e) {
-    print('❌ Error loading guardhouses: $e');
-    setState(() {
-      _isLoadingGuardhouses = false;
-    });
+  } catch (e, stackTrace) {
+    print('📍 [DEBUG] Error in _loadGuardhouses: $e');
+    print('📍 [DEBUG] Stack trace: $stackTrace');
+    
+    if (mounted) {
+      setState(() {
+        _isLoadingGuardhouses = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Debug: Failed to load guardhouses - $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 }
 
-// Also add debug info to your marker adding method
 void _addGuardhouseMarkers() {
-  print('📍 Adding guardhouse markers...');
-  int addedMarkers = 0;
+  print('📍 [DEBUG] _addGuardhouseMarkers() called');
+  print('📍 [DEBUG] Current markers count before adding: ${_markers.length}');
+  print('📍 [DEBUG] Guardhouses to add: ${_guardhouses.length}');
+  
+  int markersAdded = 0;
+  int markersSkipped = 0;
   
   for (var guardhouse in _guardhouses) {
     if (guardhouse.location.latitude != 0.0 || guardhouse.location.longitude != 0.0) {
-      _markers.add(
-        Marker(
-          markerId: MarkerId('guardhouse_${guardhouse.id}'),
-          position: guardhouse.location,
-          infoWindow: InfoWindow(
-            title: guardhouse.name,
-            snippet: guardhouse.address,
-          ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-          onTap: () => _onGuardhouseMarkerTap(guardhouse),
+      print('📍 [DEBUG] Adding marker for: ${guardhouse.name} at ${guardhouse.location}');
+      
+      final marker = Marker(
+        markerId: MarkerId('guardhouse_${guardhouse.id}'),
+        position: guardhouse.location,
+        infoWindow: InfoWindow(
+          title: guardhouse.name,
+          snippet: guardhouse.address,
         ),
+        icon: BitmapDescriptor.defaultMarkerWithHue(
+          BitmapDescriptor.hueGreen, // Green color for guardhouses
+        ),
+        onTap: () {
+          print('📍 [DEBUG] Guardhouse marker tapped: ${guardhouse.name}');
+          _onGuardhouseMarkerTap(guardhouse);
+        },
       );
-      addedMarkers++;
-      print('📍 Added marker for ${guardhouse.name} at ${guardhouse.location}');
+      
+      _markers.add(marker);
+      markersAdded++;
     } else {
-      print('⚠️ Skipping ${guardhouse.name} - invalid coordinates (0,0)');
+      print('📍 [DEBUG] Skipping ${guardhouse.name} - invalid coordinates (0,0)');
+      markersSkipped++;
     }
   }
   
-  print('📍 Total markers added: $addedMarkers');
-  print('📍 Total markers in set: ${_markers.length}');
-  setState(() {}); // Update UI
+  print('📍 [DEBUG] Markers added: $markersAdded');
+  print('📍 [DEBUG] Markers skipped: $markersSkipped');
+  print('📍 [DEBUG] Total markers now: ${_markers.length}');
+  
+  setState(() {}); // Force UI refresh
+  print('📍 [DEBUG] UI state updated');
+  
+  // Additional debug: Check if map controller is available
+  if (_mapController != null) {
+    print('📍 [DEBUG] Map controller is available');
+    
+    // Try to move camera to show guardhouses
+    if (_guardhouses.isNotEmpty && _currentPosition != null) {
+      print('📍 [DEBUG] Attempting to fit map bounds to show guardhouses');
+      _fitMapToShowGuardhouses();
+    }
+  } else {
+    print('📍 [DEBUG] Map controller is null');
+  }
+}
+
+// Add this helper method to fit the map to show guardhouses
+void _fitMapToShowGuardhouses() {
+  if (_mapController == null || _guardhouses.isEmpty) return;
+  
+  print('📍 [DEBUG] Calculating bounds for ${_guardhouses.length} guardhouses');
+  
+  double minLat = _guardhouses.first.location.latitude;
+  double maxLat = _guardhouses.first.location.latitude;
+  double minLng = _guardhouses.first.location.longitude;
+  double maxLng = _guardhouses.first.location.longitude;
+  
+  // Include current position if available
+  if (_currentPosition != null) {
+    minLat = minLat < _currentPosition!.latitude ? minLat : _currentPosition!.latitude;
+    maxLat = maxLat > _currentPosition!.latitude ? maxLat : _currentPosition!.latitude;
+    minLng = minLng < _currentPosition!.longitude ? minLng : _currentPosition!.longitude;
+    maxLng = maxLng > _currentPosition!.longitude ? maxLng : _currentPosition!.longitude;
+  }
+  
+  // Include all guardhouses
+  for (var guardhouse in _guardhouses) {
+    if (guardhouse.location.latitude != 0.0 || guardhouse.location.longitude != 0.0) {
+      minLat = minLat < guardhouse.location.latitude ? minLat : guardhouse.location.latitude;
+      maxLat = maxLat > guardhouse.location.latitude ? maxLat : guardhouse.location.latitude;
+      minLng = minLng < guardhouse.location.longitude ? minLng : guardhouse.location.longitude;
+      maxLng = maxLng > guardhouse.location.longitude ? maxLng : guardhouse.location.longitude;
+    }
+  }
+  
+  print('📍 [DEBUG] Bounds: minLat=$minLat, maxLat=$maxLat, minLng=$minLng, maxLng=$maxLng');
+  
+  // Add some padding
+  double padding = 0.01;
+  minLat -= padding;
+  maxLat += padding;
+  minLng -= padding;
+  maxLng += padding;
+  
+  try {
+    _mapController!.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
+        ),
+        100.0, // padding in pixels
+      ),
+    );
+    print('📍 [DEBUG] Camera animation started');
+  } catch (e) {
+    print('📍 [DEBUG] Failed to animate camera: $e');
+  }
 }
   // Add this method to handle guardhouse marker taps
   void _onGuardhouseMarkerTap(Guardhouse guardhouse) {
@@ -443,7 +617,7 @@ void _manualSOSTrigger() {
               Navigator.of(context).pop();
             },
           ),
-          TextButton(
+            TextButton(
             child: const Text(
               'Trigger SOS',
               style: TextStyle(
@@ -463,35 +637,6 @@ void _manualSOSTrigger() {
 }
 
 
-  void _addEmergencyLocations() {
-    if (_currentPosition == null) return;
-
-    setState(() {
-      // Clear existing markers except current location
-      _markers.removeWhere(
-        (marker) => marker.markerId.value != 'current_location',
-      );
-
-      // Re-add current location
-      _markers.add(
-        Marker(
-          markerId: const MarkerId('current_location'),
-          position: LatLng(
-            _currentPosition!.latitude,
-            _currentPosition!.longitude,
-          ),
-          infoWindow: InfoWindow(
-            title: 'Your Location (SOS ACTIVE)',
-            snippet: _currentAddress,
-          ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        ),
-      );
-    });
-
-    // Fit map to show all emergency locations
-    _fitMapToEmergencyLocations();
-  }
 
   void _fitMapToEmergencyLocations() {
     if (_mapController != null && _currentPosition != null) {
@@ -974,46 +1119,258 @@ void _manualSOSTrigger() {
     );
   }
 
-  void _showDestinationDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => DestinationDialog(
-        onDestinationSelected: (destination, latLng) {
-          setState(() {
-            _destination = destination;
-            _destinationLatLng = latLng;
+ void _showDestinationDialog() {
+  showDialog(
+    context: context,
+    builder: (context) => DestinationDialog(
+      currentPosition: _currentPosition,
+      guardhouses: _guardhouses,
+      onDestinationSelected: (destination, latLng, routeType) {
+        _handleDestinationSelection(destination, latLng, routeType);
+      },
+    ),
+  );
+}
 
-            if (latLng != null) {
-              // Add destination marker
-              _markers.add(
-                Marker(
-                  markerId: const MarkerId('destination'),
-                  position: latLng,
-                  infoWindow: InfoWindow(
-                    title: 'Destination',
-                    snippet: destination,
-                  ),
-                  icon: BitmapDescriptor.defaultMarkerWithHue(
-                    BitmapDescriptor.hueRed,
-                  ),
-                ),
-              );
+// Add this new method to handle destination selection:
+void _handleDestinationSelection(String destination, LatLng? latLng, RouteType routeType) {
+  setState(() {
+    _destination = destination;
+    _destinationLatLng = latLng;
+    _currentRouteType = routeType;
+  });
 
-              // Get directions
-              _getDirectionsToDestination();
-            }
-          });
+  if (latLng != null) {
+    // Clear existing destination and route markers
+    _markers.removeWhere(
+      (marker) => marker.markerId.value == 'destination' || 
+                  marker.markerId.value.startsWith('route_'),
+    );
+    
+    // Add destination marker with appropriate styling based on route type
+    Color markerColor;
+    String markerTitle;
+    
+    switch (routeType) {
+      case RouteType.nearestGuardhouse:
+        markerColor = Colors.green[700]!;
+        markerTitle = 'Nearest Guardhouse';
+        break;
+      case RouteType.specificGuardhouse:
+        markerColor = Colors.blue[700]!;
+        markerTitle = 'Selected Guardhouse';
+        break;
+      case RouteType.custom:
+      default:
+        markerColor = Colors.red;
+        markerTitle = 'Destination';
+        break;
+    }
+    
+    _markers.add(
+      Marker(
+        markerId: const MarkerId('destination'),
+        position: latLng,
+        infoWindow: InfoWindow(
+          title: markerTitle,
+          snippet: destination,
+        ),
+        icon: BitmapDescriptor.defaultMarkerWithHue(
+          _getHueFromColor(markerColor),
+        ),
+      ),
+    );
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Destination set to: $destination'),
-              backgroundColor: Colors.green,
+    // Get directions
+    _getDirectionsToDestination();
+    
+    // Show appropriate success message
+    String message;
+    Color snackBarColor;
+    
+    switch (routeType) {
+      case RouteType.nearestGuardhouse:
+        message = 'Route set to nearest guardhouse: $destination';
+        snackBarColor = Colors.green;
+        break;
+      case RouteType.specificGuardhouse:
+        message = 'Route set to guardhouse: $destination';
+        snackBarColor = Colors.blue;
+        break;
+      case RouteType.custom:
+      default:
+        message = 'Destination set to: $destination';
+        snackBarColor = Colors.orange;
+        break;
+    }
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              _getIconForRouteType(routeType),
+              color: Colors.white,
+              size: 20,
             ),
-          );
-        },
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: snackBarColor,
+        duration: const Duration(seconds: 3),
       ),
     );
   }
+}
+
+// Add helper methods:
+double _getHueFromColor(Color color) {
+  if (color == Colors.red) return BitmapDescriptor.hueRed;
+  if (color == Colors.green[700]) return BitmapDescriptor.hueGreen;
+  if (color == Colors.blue[700]) return BitmapDescriptor.hueBlue;
+  return BitmapDescriptor.hueRed;
+}
+
+IconData _getIconForRouteType(RouteType routeType) {
+  switch (routeType) {
+    case RouteType.nearestGuardhouse:
+      return Icons.near_me;
+    case RouteType.specificGuardhouse:
+      return Icons.security;
+    case RouteType.custom:
+    default:
+      return Icons.place;
+  }
+}
+
+// Add a route selection widget to your build method:
+Widget _buildRouteSelectionWidget() {
+  if (_guardhouses.isEmpty) return const SizedBox.shrink();
+  
+  return Container(
+    margin: const EdgeInsets.symmetric(horizontal: 16),
+    child: Row(
+      children: [
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.9),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.alt_route,
+                  color: Colors.blue[700],
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Quick Route Options:',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        ElevatedButton.icon(
+          onPressed: () => _routeToNearestGuardhouse(),
+          icon: const Icon(Icons.security, size: 16),
+          label: const Text('Nearest Guard', style: TextStyle(fontSize: 11)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.green,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// Add method to quickly route to nearest guardhouse:
+void _routeToNearestGuardhouse() {
+  if (_guardhouses.isEmpty || _currentPosition == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('No guardhouses available or location not found'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+
+  // Find nearest guardhouse
+  Guardhouse? nearest;
+  double minDistance = double.infinity;
+
+  for (var guardhouse in _guardhouses) {
+    double distance = Geolocator.distanceBetween(
+      _currentPosition!.latitude,
+      _currentPosition!.longitude,
+      guardhouse.location.latitude,
+      guardhouse.location.longitude,
+    );
+
+    if (distance < minDistance) {
+      minDistance = distance;
+      nearest = guardhouse;
+    }
+  }
+
+  if (nearest != null) {
+    _handleDestinationSelection(
+      'Nearest Guardhouse: ${nearest.name}',
+      nearest.location,
+      RouteType.nearestGuardhouse,
+    );
+  }
+}
+
+// Update the SOS emergency locations method to show route selection:
+void _addEmergencyLocations() {
+  if (_currentPosition == null) return;
+
+  setState(() {
+    // Clear existing markers except current location
+    _markers.removeWhere(
+      (marker) => marker.markerId.value != 'current_location',
+    );
+
+    // Re-add current location with SOS styling
+    _markers.add(
+      Marker(
+        markerId: const MarkerId('current_location'),
+        position: LatLng(
+          _currentPosition!.latitude,
+          _currentPosition!.longitude,
+        ),
+        infoWindow: InfoWindow(
+          title: 'Your Location (SOS ACTIVE)',
+          snippet: _currentAddress,
+        ),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+      ),
+    );
+
+    // Show nearest guardhouses during SOS
+    _highlightNearestGuardhouses();
+    
+    // Auto-route to nearest guardhouse during SOS
+    _routeToNearestGuardhouse();
+  });
+
+  _fitMapToEmergencyLocations();
+}
 
   void _showError(String message) {
     if (mounted) {
@@ -1209,5 +1566,8 @@ void _manualSOSTrigger() {
         ),
       ),
     );
+    
   }
 }
+
+

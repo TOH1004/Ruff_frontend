@@ -7,6 +7,32 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 // --- CHAT MODELS ---
 
+// Model: Represents a friend request
+class FriendRequest {
+  final String requestId;
+  final String fromUserId;
+  final String toUserId;
+  final String fromName;
+
+  FriendRequest({
+    required this.requestId,
+    required this.fromUserId,
+    required this.toUserId,
+    required this.fromName,
+  });
+
+  // Factory constructor to create a FriendRequest from a Firestore document
+  factory FriendRequest.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return FriendRequest(
+      requestId: doc.id,
+      fromUserId: data['fromUserId'] ?? '',
+      toUserId: data['toUserId'] ?? '',
+      fromName: data['fromName'] ?? 'Unknown',
+    );
+  }
+}
+
 // Model: Represents a friend in the chat list
 class Friend {
   final String username; // This is the friend's username
@@ -35,30 +61,6 @@ class Friend {
       lastTime: '',
       // isOnline would typically be managed by a presence system (e.g., Realtime Database)
       isOnline: false,
-    );
-  }
-}
-
-// Model: Represents a pending friend request
-class FriendRequest {
-  final String fromUserId;
-  final String fromName;
-  // This is the document ID for the request in a real Firebase setup
-  final String requestId;
-
-  FriendRequest({
-    required this.fromUserId,
-    required this.fromName,
-    required this.requestId,
-  });
-
-  // Factory constructor to create a FriendRequest from a Firestore document
-  factory FriendRequest.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-    return FriendRequest(
-      requestId: doc.id,
-      fromUserId: data['fromUserId'] ?? '',
-      fromName: data['fromName'] ?? 'Unknown User',
     );
   }
 }

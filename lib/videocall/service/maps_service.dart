@@ -1,3 +1,4 @@
+// File: lib/service/maps_service.dart
 
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -86,51 +87,153 @@ class GoogleMapsService {
     return polyline;
   }
 
-  /// Updated: Fetch guardhouses with geocoding support
+  /// Updated: Fetch guardhouses from Firestore with geocoding and debugging
   static Future<List<Guardhouse>> getGuardhouses() async {
+    print('🏠 [DEBUG] Starting getGuardhouses...');
     try {
-      final snapshot = await FirebaseFirestore.instance.collection('guardhouses').get();
+      print('🏠 [DEBUG] Connecting to Firebase...');
+      final snapshot = await FirebaseFirestore.instance
+          .collection('guardhouses')
+          .get()
+          .timeout(Duration(seconds: 30)); // Add timeout
+      print('🏠 [DEBUG] Found ${snapshot.docs.length} documents in guardhouses collection');
+      
+      if (snapshot.docs.isEmpty) {
+        print('🏠 [DEBUG] No documents found in guardhouses collection!');
+        print('🏠 [DEBUG] This could be due to:');
+        print('🏠 [DEBUG] 1. Empty collection');
+        print('🏠 [DEBUG] 2. Firebase security rules blocking access');
+        print('🏠 [DEBUG] 3. Authentication issues');
+        return [];
+      }
+      
+      // Print all document IDs for verification
+      print('🏠 [DEBUG] Document IDs found:');
+      for (int i = 0; i < snapshot.docs.length; i++) {
+        print('🏠 [DEBUG] ${i + 1}. ${snapshot.docs[i].id}');
+      }
+      
       List<Guardhouse> guardhouses = [];
       
-      for (var doc in snapshot.docs) {
+      for (int i = 0; i < snapshot.docs.length; i++) {
+        var doc = snapshot.docs[i];
+        print('🏠 [DEBUG] Processing document ${i + 1}/${snapshot.docs.length}: ${doc.id}');
+        
         try {
-          // Use the geocoding method if coordinates are missing
           final data = doc.data() as Map<String, dynamic>;
+          print('🏠 [DEBUG] Document data: $data');
+          
+          final name = data['name'] ?? 'Guardhouse ${i + 1}';
+          final address = data['address'] ?? '';
+          final phone = data['phone'] ?? '';
+          
+          print('🏠 [DEBUG] Name: $name');
+          print('🏠 [DEBUG] Address: $address');
+          print('🏠 [DEBUG] Phone: $phone');
+          
+          // Check if lat/lng already exist
           final lat = (data['lat'] as num?)?.toDouble();
           final lng = (data['lng'] as num?)?.toDouble();
           
+          LatLng location;
+          
           if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
             // Use existing coordinates
-            guardhouses.add(Guardhouse.fromDoc(doc));
+            location = LatLng(lat, lng);
+            print('🏠 [DEBUG] Using existing coordinates: $lat, $lng');
           } else {
-            // Try geocoding
-            guardhouses.add(await Guardhouse.fromDocWithGeocoding(doc));
+            // Geocode the address
+            print('🏠 [DEBUG] No coordinates found, geocoding address: $address');
+            if (address.isEmpty) {
+              print('🏠 [DEBUG] Empty address, skipping guardhouse: $name');
+              continue;
+            }
+            
+            final geocodedLocation = await _geocodeAddress(address);
+            if (geocodedLocation != null) {
+              location = geocodedLocation;
+              print('🏠 [DEBUG] Geocoded successfully: ${location.latitude}, ${location.longitude}');
+              
+              // Save coordinates back to Firebase
+              try {
+                await doc.reference.update({
+                  'lat': location.latitude,
+                  'lng': location.longitude,
+                });
+                print('🏠 [DEBUG] Saved coordinates to Firebase');
+              } catch (updateError) {
+                print('🏠 [DEBUG] Failed to save coordinates: $updateError');
+              }
+            } else {
+              print('🏠 [DEBUG] Geocoding failed for: $address, skipping guardhouse');
+              continue;
+            }
           }
-        } catch (e) {
-          print('Error processing guardhouse ${doc.id}: $e');
-          // Add with default coordinates if geocoding fails
-          guardhouses.add(Guardhouse.fromDoc(doc));
+          
+          final guardhouse = Guardhouse(
+            id: doc.id,
+            name: name,
+            address: address,
+            location: location,
+          );
+          
+          guardhouses.add(guardhouse);
+          print('🏠 [DEBUG] Successfully added guardhouse: $name at ${location.latitude}, ${location.longitude}');
+          
+        } catch (docError) {
+          print('🏠 [DEBUG] Error processing document ${doc.id}: $docError');
+          continue;
         }
       }
       
-      // Filter out guardhouses with invalid coordinates (0,0)
-      return guardhouses.where((g) => g.location.latitude != 0.0 || g.location.longitude != 0.0).toList();
+      print('🏠 [DEBUG] Successfully processed ${guardhouses.length} guardhouses');
+      return guardhouses;
+      
     } catch (e) {
-      print('Error fetching guardhouses: $e');
+      print('🏠 [DEBUG] Error fetching guardhouses: $e');
+      print('🏠 [DEBUG] Stack trace: ${StackTrace.current}');
       return [];
     }
   }
   
-  /// Helper method to geocode an address
-  static Future<LatLng?> geocodeAddress(String address) async {
+  /// Helper method to geocode an address with debugging
+  static Future<LatLng?> _geocodeAddress(String address) async {
+    print('🌍 [DEBUG] Starting geocoding for: $address');
     try {
-      List<Location> locations = await locationFromAddress(address);
+      // Add "Malaysia" to improve geocoding accuracy if not already present
+      String fullAddress = address.toLowerCase().contains('malaysia') 
+          ? address 
+          : '$address, Malaysia';
+          
+      print('🌍 [DEBUG] Full address for geocoding: $fullAddress');
+      
+      List<Location> locations = await locationFromAddress(fullAddress);
       if (locations.isNotEmpty) {
-        return LatLng(locations.first.latitude, locations.first.longitude);
+        final location = locations.first;
+        print('🌍 [DEBUG] Geocoding successful: ${location.latitude}, ${location.longitude}');
+        return LatLng(location.latitude, location.longitude);
+      } else {
+        print('🌍 [DEBUG] No locations found for: $fullAddress');
       }
     } catch (e) {
-      print('Geocoding failed for $address: $e');
+      print('🌍 [DEBUG] First geocoding attempt failed: $e');
+      
+      // Try without "Malaysia" if the first attempt failed
+      try {
+        print('🌍 [DEBUG] Trying without Malaysia suffix...');
+        List<Location> locations = await locationFromAddress(address);
+        if (locations.isNotEmpty) {
+          final location = locations.first;
+          print('🌍 [DEBUG] Second attempt successful: ${location.latitude}, ${location.longitude}');
+          return LatLng(location.latitude, location.longitude);
+        } else {
+          print('🌍 [DEBUG] No locations found in second attempt');
+        }
+      } catch (e2) {
+        print('🌍 [DEBUG] Second geocoding attempt also failed: $e2');
+      }
     }
+    print('🌍 [DEBUG] Geocoding completely failed for: $address');
     return null;
   }
 }
