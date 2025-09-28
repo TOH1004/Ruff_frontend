@@ -1,7 +1,9 @@
+// File: lib/home_sections/chat_tab.dart
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'chat_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'chat_tab_manager.dart';
 
 class ChatTab extends StatefulWidget {
   const ChatTab({super.key});
@@ -11,106 +13,85 @@ class ChatTab extends StatefulWidget {
 }
 
 class _ChatTabState extends State<ChatTab> {
-  final user = FirebaseAuth.instance.currentUser!;
-  final TextEditingController _friendIdController = TextEditingController();
+  final ValueNotifier<int> _selectedChatTab = ValueNotifier<int>(0);
 
-  Future<void> _addFriend() async {
-    final friendId = _friendIdController.text.trim();
-    if (friendId.isEmpty) return;
+  String formatDateTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
 
-    final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
-    final friendRef = FirebaseFirestore.instance.collection('users').doc(friendId);
-
-    final friendDoc = await friendRef.get();
-    if (!friendDoc.exists) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Friend not found")),
-      );
-      return;
+    if (messageDate == today) {
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else if (now.difference(messageDate).inDays == 1) {
+      return 'Yesterday';
+    } else if (now.difference(messageDate).inDays < 7) {
+      const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return days[dateTime.weekday - 1];
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
     }
+  }
 
-    await userRef.update({
-      "friends.$friendId": true,
-    });
-
-    await friendRef.update({
-      "friends.${user.uid}": true,
-    });
-
-    _friendIdController.clear();
+  Color getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'completed':
+        return Colors.green;
+      case 'missed':
+        return Colors.red;
+      case 'emergency':
+        return Colors.orange;
+      case 'active':
+        return Colors.blue;
+      default:
+        return Colors.grey;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // 🔹 Add friend button
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _friendIdController,
-                  decoration: const InputDecoration(
-                    labelText: "Enter Friend's UserID",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.person_add),
-                onPressed: _addFriend,
-              ),
-            ],
-          ),
-        ),
-
-        // 🔹 Friends List
-        Expanded(
-          child: StreamBuilder<DocumentSnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection("users")
-                .doc(user.uid)
-                .snapshots(),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-
-              final data = snapshot.data!.data() as Map<String, dynamic>;
-              final friends = (data["friends"] ?? {}) as Map<String, dynamic>;
-
-              if (friends.isEmpty) {
-                return const Center(child: Text("No friends yet. Add some!"));
-              }
-
-              return ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                children: friends.keys.map((friendId) {
-                  return FutureBuilder<DocumentSnapshot>(
-                    future: FirebaseFirestore.instance.collection("users").doc(friendId).get(),
-                    builder: (context, friendSnapshot) {
-                      if (!friendSnapshot.hasData) return const SizedBox();
-                      final friendData = friendSnapshot.data!.data() as Map<String, dynamic>;
-                      return ListTile(
-                        title: Text(friendData["name"] ?? "Unknown"),
-                        subtitle: Text(friendId),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => ChatScreen(friendId: friendId, friendName: friendData["name"]),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  );
-                }).toList(),
-              );
-            },
-          ),
-        ),
-      ],
+    return ChatTabManager(
+      selectedChatTab: _selectedChatTab,
+      formatDateTime: formatDateTime,
+      getStatusColor: getStatusColor,
     );
   }
+
+  @override
+  void dispose() {
+    _selectedChatTab.dispose();
+    super.dispose();
+  }
+
+Future<void> createChat(String user1Uid, String user2Uid) async {
+  try {
+    final chatCollection = FirebaseFirestore.instance.collection('chats');
+
+    // Check if a chat already exists between these two users
+    final existingChat = await chatCollection
+        .where('members', arrayContainsAny: [user1Uid, user2Uid])
+        .get();
+
+    bool chatExists = existingChat.docs.any((doc) {
+      List members = doc['members'];
+      return members.contains(user1Uid) && members.contains(user2Uid);
+    });
+
+    if (chatExists) {
+      print('Chat already exists');
+      return;
+    }
+
+    // Create new chat
+    await chatCollection.add({
+      'members': [user1Uid, user2Uid], // Array of the two users
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastMessage': null, // Optional: for showing recent message preview
+    });
+
+    print('Chat created successfully!');
+  } catch (e) {
+    print('Error creating chat: $e');
+  }
+}
+
 }

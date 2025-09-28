@@ -2,19 +2,29 @@
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+// NOTE: Added conceptual Firebase imports
+// import 'package:cloud_firestore/cloud_firestore.dart'; 
+// import 'package:firebase_auth/firebase_auth.dart'; 
 import '../testmap.dart'; 
 // Component Imports
 import 'hero_section.dart';
 import 'action_cards_section.dart';
 import 'journey_cards_section.dart';
-import 'chat_tab_manager.dart';
-
+import '../chat/chat_tab_manager.dart';
+import 'journey_firebase.dart';
 // Utility/Logic Imports (Keep necessary imports for functionality)
 import '../videocall/videocall_data.dart';
 import '../videocall/videocall.dart';
 import '../videocall/wrapper.dart';
 import '../profile.dart';
 import '../guard/(guard)homepage_chat2.dart';
+
+// NOTE: Placeholder class for Location and Firebase functionality
+class UserLocation {
+  // Hardcoded coordinates based on the image's existing record for demonstration
+  final double latitude = 1.8640332; 
+  final double longitude = 103.1141714; 
+}
 
 class RuffAppScreen extends StatelessWidget {
   RuffAppScreen({super.key});
@@ -135,7 +145,55 @@ class RuffAppScreen extends StatelessWidget {
     );
   }
 
+  // --- NEW: Firebase SOS Trigger Function ---
+  Future<void> _triggerSosRequest(BuildContext context) async {
+    // This function performs the Firebase write to 'sos_requests'
+    // It mirrors the structure of the existing document in the image.
+    try {
+      // 1. Get current user info (Conceptual)
+      // final user = FirebaseAuth.instance.currentUser;
+      // final userId = user?.uid ?? 'unknown_user_id';
+      // final userEmail = user?.email ?? 'unknown@email.com';
+      
+      // Hardcoded data based on the image for demonstration
+      const userId = 'YULfb4OS68WNQSX6ZgZ4AQv0h0h1'; 
+      const userEmail = 'tsthong4@gmail.com'; 
+      const userName = null; 
+
+      // 2. Get current location (Conceptual)
+      final location = UserLocation(); 
+
+      final sosData = {
+        'additionalInfo': 'Emergency triggered during video call',
+        'hasAttachments': false,
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+        'status': 'Active',
+        // 'timestamp': FieldValue.serverTimestamp(), // Use server timestamp when connected to Firebase
+        'timestamp': DateTime.now().toIso8601String(), // Placeholder without Firebase SDK
+        'userEmail': userEmail,
+        'userId': userId,
+        'userName': userName,
+      };
+
+      // 3. Write to Firebase (Conceptual line)
+      // await FirebaseFirestore.instance.collection('sos_requests').add(sosData);
+      
+      print('SOS Request Triggered: $sosData'); 
+
+    } catch (e) {
+      print('Error triggering SOS: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to trigger SOS (Error: $e)')),
+        );
+      }
+    }
+  }
+  // --- END: Firebase SOS Trigger Function ---
+
   void _startEmergencyCall(BuildContext context) {
+    // Show a connecting dialog 
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -156,31 +214,42 @@ class RuffAppScreen extends StatelessWidget {
       ),
     );
 
-    Future.delayed(const Duration(seconds: 2), () {
-      Navigator.pop(context);
-      _addToVideoCallHistory('Emergency Services', 'emergency');
-      
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => VideoCallPermissionWrapper(
-            onPermissionDenied: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Camera and microphone permissions are required for emergency calls.'),
-                  backgroundColor: Colors.red,
+    // 1. Trigger the Firebase SOS request first
+    _triggerSosRequest(context).then((_) {
+      // 2. Delay and proceed to call screen
+      Future.delayed(const Duration(seconds: 2), () {
+        if (context.mounted) {
+          Navigator.pop(context); // Close connecting dialog
+        }
+
+        // 3. Add to history and start call. Added userId.
+        _addToVideoCallHistory('Emergency Services', 'emergency', userId: 'emergency_sos_id'); 
+
+        if (context.mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => VideoCallPermissionWrapper(
+                  onPermissionDenied: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Camera and microphone permissions are required for emergency calls.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  },
+                  child: const VideoCallPage(),
                 ),
-              );
-            },
-            child: const VideoCallPage(),
-          ),
-        ),
-      );
+              ),
+            );
+        }
+      });
     });
   }
 
   void _startRegularCall(BuildContext context) {
-    _addToVideoCallHistory('Campus Security', 'regular');
+    // Added userId for history link
+    _addToVideoCallHistory('You\'ve started your journey', 'regular', userId: 'campus_security_id');
     
     Navigator.push(
       context,
@@ -200,13 +269,15 @@ class RuffAppScreen extends StatelessWidget {
     );
   }
 
-  void _addToVideoCallHistory(String participantName, String callType) {
+  // Modified to accept an optional userId parameter
+  void _addToVideoCallHistory(String participantName, String callType, {String? userId}) {
     final newCall = VideoCallHistory(
       participantName: participantName,
       callType: callType,
       timestamp: DateTime.now(),
       duration: '0:00', // Will be updated when call ends
       status: 'started',
+      // participantId: userId, // ASSUMING VideoCallHistory model supports this
     );
     
     List<VideoCallHistory> updatedList = List.from(videoCallHistory.value);

@@ -13,6 +13,20 @@ class GuardRuffAppScreen extends StatefulWidget {
 class _GuardRuffAppScreenState extends State<GuardRuffAppScreen> {
   final ValueNotifier<int> _selectedChatTab = ValueNotifier<int>(0);
 
+  // Utility method for bottom navigation
+  Widget _buildBottomNavItem(IconData icon, String label, bool isActive) {
+    const active = Color(0xFF3075FF);
+    const inactive = Color(0xFF9BA0A6);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: isActive ? active : inactive, size: 24),
+        const SizedBox(height: 4),
+        Text(label, style: TextStyle(color: isActive ? active : inactive, fontSize: 12, fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const pageBg = Color(0xFFF4F5F7);
@@ -28,16 +42,13 @@ class _GuardRuffAppScreenState extends State<GuardRuffAppScreen> {
             final s = (w / 375.0).clamp(0.85, 1.15);
 
             // Sizes tuned to your second screenshot
-            final headerH      = 160.0 * s;
+            final headerH     = 160.0 * s;
             final mascotSize   = 96.0  * s;
             final ruffSize     = 28.0  * s;
             final taglineSize  = 12.0  * s;
             final cardH        = 88.0  * s;
             final cardDrop     = 36.0  * s;   // how much the card overlaps
-            final actionR      = 22.0  * s;
-            final actionIcon   = 20.0  * s;
-            final actionGap    = 10.0  * s;
-
+            
             return Column(
               children: [
                 // ===== Main content =====
@@ -148,7 +159,7 @@ class _GuardRuffAppScreenState extends State<GuardRuffAppScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const SosPage(), // Just like ReportsPage
+                                              builder: (context) => const SosPage(),
                                             ),
                                           );
                                         },
@@ -207,7 +218,7 @@ class _GuardRuffAppScreenState extends State<GuardRuffAppScreen> {
                             builder: (context, selectedTab, _) {
                               return selectedTab == 0
                                   ? const _ChatListTab()
-                                  : const _HistoryTab();
+                                  : const _HistoryTab(); // MODIFIED
                             },
                           ),
                         ),
@@ -246,7 +257,9 @@ class _GuardRuffAppScreenState extends State<GuardRuffAppScreen> {
   }
 }
 
-// ===== Widgets =====
+// =================================================================
+// ===== WIDGETS AND DATA MODELS =====
+// =================================================================
 
 class _TopTabButton extends StatelessWidget {
   final String label;
@@ -301,11 +314,13 @@ class _ActionCircle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // This widget is not used in the final GuardRuffAppScreen layout,
+    // but kept for completeness if it were used elsewhere.
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(radius + 18),
       child: SizedBox(
-        width: radius * 5.2, // keeps icon+label compact like mock
+        width: radius * 5.2,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -326,15 +341,24 @@ class _ActionCircle extends StatelessWidget {
   }
 }
 
+class _ChatItem {
+  final String name, last, time, avatarAsset;
+  final bool online;
+  _ChatItem(this.name, this.last, this.time, this.avatarAsset, {this.online = false});
+}
+
+// 1. MODIFIED: Chat list for the guard to communicate with various roles
 class _ChatListTab extends StatelessWidget {
   const _ChatListTab();
 
   @override
   Widget build(BuildContext context) {
+    // Represents chats with various users/roles (students, other guards, staff, etc.)
     final items = <_ChatItem>[
-      _ChatItem('Alex', 'On patrol near Library.', '8:27 pm', 'assets/hellodog.png', online: true),
-      _ChatItem('Emma', 'Arrived at Hall B.', '8/29', 'assets/aibuddy.png', online: true),
-      _ChatItem('Felicia', 'Escorting to dorm.', '8/26', 'assets/caring.png'),
+      _ChatItem('User: Alice L.', 'Responded to distress signal.', '9:01 pm', 'assets/hellodog.png', online: true),
+      _ChatItem('Guard: Beta Team', 'Patrol near East Gate.', '8:27 pm', 'assets/aibuddy.png', online: true),
+      _ChatItem('Campus Staff: Admin', 'Access confirmed for zone 3.', '8/29', 'assets/caring.png'),
+      _ChatItem('Student: Sam T.', 'Stuck near library exit.', '8/26', 'assets/hellodog.png'),
     ];
 
     return ListView.separated(
@@ -346,15 +370,24 @@ class _ChatListTab extends StatelessWidget {
   }
 }
 
+class _HistoryItem {
+  final String name, status; // name = Event Type, status = User/Context
+  final DateTime dateTime;
+  _HistoryItem(this.name, this.status, this.dateTime);
+}
+
+// 2. MODIFIED: History list showing log of accepted SOS requests
 class _HistoryTab extends StatelessWidget {
   const _HistoryTab();
 
   @override
   Widget build(BuildContext context) {
+    // History reflects actions like SOS requests being accepted
     final historyItems = [
-      _HistoryItem('Alex', 'Completed', DateTime.now().subtract(const Duration(minutes: 10))),
-      _HistoryItem('Emma', 'Missed', DateTime.now().subtract(const Duration(hours: 2))),
-      _HistoryItem('Felicia', 'Declined', DateTime.now().subtract(const Duration(days: 1))),
+      _HistoryItem('SOS Request Accepted', 'User: Sarah K. (Dorm 301)', DateTime.now().subtract(const Duration(minutes: 5))),
+      _HistoryItem('SOS Request Accepted', 'User: John D. (Admin Block)', DateTime.now().subtract(const Duration(hours: 1))),
+      _HistoryItem('Report Filed', 'Guard: Alpha Team 1', DateTime.now().subtract(const Duration(days: 2))),
+      _HistoryItem('Report Filed', 'Guard: Charlie Patrol', DateTime.now().subtract(const Duration(days: 3))),
     ];
 
     return ListView.separated(
@@ -364,18 +397,6 @@ class _HistoryTab extends StatelessWidget {
       itemBuilder: (context, i) => _HistoryTile(item: historyItems[i]),
     );
   }
-}
-
-class _ChatItem {
-  final String name, last, time, avatarAsset;
-  final bool online;
-  _ChatItem(this.name, this.last, this.time, this.avatarAsset, {this.online = false});
-}
-
-class _HistoryItem {
-  final String name, status;
-  final DateTime dateTime;
-  _HistoryItem(this.name, this.status, this.dateTime);
 }
 
 class _ChatTile extends StatelessWidget {
@@ -421,41 +442,38 @@ class _HistoryTile extends StatelessWidget {
     return "${dt.month}/${dt.day}, $h:$m";
   }
 
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'Completed': return Colors.green;
-      case 'Missed':    return Colors.red;
-      case 'Declined':  return Colors.orange;
-      default:          return Colors.grey;
+  // Uses the event name/type to determine color
+  Color _getStatusColor(String eventType) {
+    switch (eventType) {
+      case 'SOS Request Accepted': return const Color(0xFF3075FF); // Blue for accepted SOS
+      case 'Report Filed':        return Colors.green;
+      default:                    return Colors.grey;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final eventType = item.name;
+    final userContext = item.status;
+    final eventColor = _getStatusColor(eventType);
+    
     return ListTile(
+      onTap: () => {}, // Should ideally open event details
       leading: CircleAvatar(
-        backgroundColor: Colors.grey[300],
-        child: Text(item.name[0], style: const TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: eventColor, 
+        child: Icon(
+            eventType == 'SOS Request Accepted' ? Icons.check_circle_outline : Icons.file_copy_outlined, 
+            color: Colors.white,
+            size: 20,
+        ),
       ),
-      title: Text(item.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(item.status, style: TextStyle(color: _getStatusColor(item.status))),
+      title: Text(eventType, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black87)),
+      subtitle: Text(userContext, style: TextStyle(color: Colors.grey.shade600)),
       trailing: Text(_formatDateTime(item.dateTime), style: const TextStyle(fontSize: 12)),
     );
   }
 }
 
-Widget _buildBottomNavItem(IconData icon, String label, bool isActive) {
-  const active = Color(0xFF3075FF);
-  const inactive = Color(0xFF9BA0A6);
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, color: isActive ? active : inactive, size: 24),
-      const SizedBox(height: 4),
-      Text(label, style: TextStyle(color: isActive ? active : inactive, fontSize: 12, fontWeight: FontWeight.w500)),
-    ],
-  );
-}
 
 Widget _buildActionCardAsset({
   required String assetPath,
